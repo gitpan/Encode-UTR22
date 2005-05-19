@@ -12,9 +12,9 @@
 
 #     ABSTRACT => q[UTR22c support for Perl]
 #     AUTHOR => q[martin_hosken@sil.org]
-#     EXE_FILES => [q[scripts/testutr22.pl], q[scripts/utr22tec.pl]]
+#     EXE_FILES => [q[scripts/testutr22], q[scripts/utr22tec]]
 #     NAME => q[Encode::UTR22]
-#     VERSION => q[0.11]
+#     VERSION => q[0.13]
 #     dist => { TO_UNIX=>q[perl -Mtounix -e "tounix(\"$(DISTVNAME)\")"] }
 
 # --- MakeMaker post_initialize section:
@@ -54,11 +54,11 @@ AR_STATIC_ARGS = cr
 DIRFILESEP = ^\
 NAME = Encode::UTR22
 NAME_SYM = Encode_UTR22
-VERSION = 0.11
+VERSION = 0.13
 VERSION_MACRO = VERSION
-VERSION_SYM = 0_11
+VERSION_SYM = 0_13
 DEFINE_VERSION = -D$(VERSION_MACRO)=\"$(VERSION)\"
-XS_VERSION = 0.11
+XS_VERSION = 0.13
 XS_VERSION_MACRO = XS_VERSION
 XS_DEFINE_VERSION = -D$(XS_VERSION_MACRO)=\"$(XS_VERSION)\"
 INST_ARCHLIB = blib\arch
@@ -237,7 +237,7 @@ RCS_LABEL = rcs -Nv$(VERSION_SYM): -q
 DIST_CP = best
 DIST_DEFAULT = tardist
 DISTNAME = Encode-UTR22
-DISTVNAME = Encode-UTR22-0.11
+DISTVNAME = Encode-UTR22-0.13
 
 
 # --- MakeMaker macro section:
@@ -380,27 +380,27 @@ $(INST_SCRIPT)\.exists :: D:\progs\perl\lib\CORE\perl.h
 
 	-$(NOECHO) $(CHMOD) $(PERM_RWX) $(INST_SCRIPT)
 
-EXE_FILES = scripts/testutr22.pl scripts/utr22tec.pl
+EXE_FILES = scripts/testutr22 scripts/utr22tec
 
 FIXIN = pl2bat.bat
 
-pure_all :: $(INST_SCRIPT)\utr22tec.pl $(INST_SCRIPT)\testutr22.pl
+pure_all :: $(INST_SCRIPT)\utr22tec $(INST_SCRIPT)\testutr22
 	$(NOECHO) $(NOOP)
 
 realclean ::
-	$(RM_F) $(INST_SCRIPT)\utr22tec.pl $(INST_SCRIPT)\testutr22.pl
+	$(RM_F) $(INST_SCRIPT)\utr22tec $(INST_SCRIPT)\testutr22
 
-$(INST_SCRIPT)\utr22tec.pl: scripts/utr22tec.pl $(FIRST_MAKEFILE) $(INST_SCRIPT)\.exists
-	$(NOECHO) $(RM_F) $(INST_SCRIPT)\utr22tec.pl
-	$(CP) scripts/utr22tec.pl $(INST_SCRIPT)\utr22tec.pl
-	$(FIXIN) $(INST_SCRIPT)\utr22tec.pl
-	-$(NOECHO) $(CHMOD) $(PERM_RWX) $(INST_SCRIPT)\utr22tec.pl
+$(INST_SCRIPT)\utr22tec: scripts/utr22tec $(FIRST_MAKEFILE) $(INST_SCRIPT)\.exists
+	$(NOECHO) $(RM_F) $(INST_SCRIPT)\utr22tec
+	$(CP) scripts/utr22tec $(INST_SCRIPT)\utr22tec
+	$(FIXIN) $(INST_SCRIPT)\utr22tec
+	-$(NOECHO) $(CHMOD) $(PERM_RWX) $(INST_SCRIPT)\utr22tec
 
-$(INST_SCRIPT)\testutr22.pl: scripts/testutr22.pl $(FIRST_MAKEFILE) $(INST_SCRIPT)\.exists
-	$(NOECHO) $(RM_F) $(INST_SCRIPT)\testutr22.pl
-	$(CP) scripts/testutr22.pl $(INST_SCRIPT)\testutr22.pl
-	$(FIXIN) $(INST_SCRIPT)\testutr22.pl
-	-$(NOECHO) $(CHMOD) $(PERM_RWX) $(INST_SCRIPT)\testutr22.pl
+$(INST_SCRIPT)\testutr22: scripts/testutr22 $(FIRST_MAKEFILE) $(INST_SCRIPT)\.exists
+	$(NOECHO) $(RM_F) $(INST_SCRIPT)\testutr22
+	$(CP) scripts/testutr22 $(INST_SCRIPT)\testutr22
+	$(FIXIN) $(INST_SCRIPT)\testutr22
+	-$(NOECHO) $(CHMOD) $(PERM_RWX) $(INST_SCRIPT)\testutr22
 
 
 # --- MakeMaker subdirs section:
@@ -444,7 +444,7 @@ metafile :
 	$(NOECHO) $(ECHO) "# http://module-build.sourceforge.net/META-spec.html" > META.yml
 	$(NOECHO) $(ECHO) "#XXXXXXX This is a prototype!!!  It will change in the future!!! XXXXX#" >> META.yml
 	$(NOECHO) $(ECHO) "name:         Encode-UTR22" >> META.yml
-	$(NOECHO) $(ECHO) "version:      0.11" >> META.yml
+	$(NOECHO) $(ECHO) "version:      0.13" >> META.yml
 	$(NOECHO) $(ECHO) "version_from: " >> META.yml
 	$(NOECHO) $(ECHO) "installdirs:  site" >> META.yml
 	$(NOECHO) $(ECHO) "requires:" >> META.yml
@@ -712,7 +712,7 @@ testdb_static :: testdb_dynamic
 # --- MakeMaker ppd section:
 # Creates a PPD (Perl Package Description) for a binary distribution.
 ppd:
-	$(NOECHO) $(ECHO) "<SOFTPKG NAME=\"$(DISTNAME)\" VERSION=\"0,11,0,0\">" > $(DISTNAME).ppd
+	$(NOECHO) $(ECHO) "<SOFTPKG NAME=\"$(DISTNAME)\" VERSION=\"0,13,0,0\">" > $(DISTNAME).ppd
 	$(NOECHO) $(ECHO) "    <TITLE>$(DISTNAME)</TITLE>" >> $(DISTNAME).ppd
 	$(NOECHO) $(ECHO) "    <ABSTRACT>UTR22c support for Perl</ABSTRACT>" >> $(DISTNAME).ppd
 	$(NOECHO) $(ECHO) "    <AUTHOR>martin_hosken@sil.org</AUTHOR>" >> $(DISTNAME).ppd

@@ -25,13 +25,16 @@ Features of this module
 
 =cut
 
-require 5.6.0;
+require 5.8.0;
 
 use XML::Parser::Expat;
+use Encode;
 use Carp;
 use strict;
 
-use vars qw($current $curr_side);
+use vars qw($current $curr_side $VERSION);
+
+$VERSION = 0.02;    #   MJPH     7-JUL-2004     Add bctxt to reorder rules
 
 sub new
 {
@@ -146,7 +149,9 @@ sub process_file
             push(@{$xml->{' mycontext'}{'orders'}{$curr_side}}, {
                     'line' => $xml->current_line,
                     'b' => $attrs{'b'},
-                    'u' => $attrs{'u'}});
+                    'u' => $attrs{'u'},
+                    'bctxt' => $attrs{'bctxt'},
+                    'actxt' => $attrs{'actxt'}});
         }
     }, 'End' => sub {
         my ($xml, $tag) = @_;
@@ -223,14 +228,14 @@ sub compile
     $self;
 }
 
-sub decode
+sub decode($$;$)
 {
     my ($self, $str, $check) = @_;
     my ($res, $len, $c, $temp, $r, $count, $tpos, $found);
 
     return undef unless ($self->{'bsimple'} || $self->{'bconv'});
 
-    use bytes;
+    Encode::_utf8_on($res);
 
     $str = $self->reorder($str, $self->{'border'}[0], 1) if (defined $self->{'border'}[0]);
 
@@ -275,14 +280,14 @@ sub decode
     $res;
 }
 
-sub encode
+sub encode($$;$)
 {
     my ($self, $str, $check) = @_;
     my ($res, $len, $c, $temp, $r, $tpos, $found);
 
     return undef unless ($self->{'usimple'} || $self->{'uconv'});
 
-    use utf8;
+    Encode::_utf8_off($res);
 
     $str = $self->reorder($str, $self->{'uorder'}[0], 0) if (defined $self->{'uorder'}[0]);
 
@@ -334,7 +339,7 @@ sub debug_decode
 
     return undef unless ($self->{'bsimple'} || $self->{'bconv'});
 
-    use bytes;
+    Encode::_utf8_on($res);
 
     ($str, $debug) = $self->debug_reorder($str, $self->{'border'}[0], 1) if (defined $self->{'border'}[0]);
 
@@ -405,7 +410,7 @@ sub debug_encode
 
     return undef unless ($self->{'usimple'} || $self->{'uconv'});
 
-    use utf8;
+    Encode::_utf8_off($res);
 
     ($str, $debug) = $self->debug_reorder($str, $self->{'uorder'}[0], 0) if (defined $self->{'uorder'}[0]);
     $debug .= "\nMapping from Unicode to Bytes\n";
@@ -595,7 +600,7 @@ sub compile_order
     my ($destl) = $toBytes ? 'b' : 'u';
     my ($output) = $toBytes ? 'uorder' : 'border';
     my (@sides) = $toBytes ? ('unicode', 'bytes') : ('bytes', 'unicode');
-    my ($count, $r, $obj, $i, $reg, $list, %names, @nums, $name, $reg1, $eval);
+    my ($count, $r, $obj, $i, $reg, $list, %names, @nums, $name, $reg1, $eval, $rega, $regb, $namec);
 
     for ($count = 0; $count < 2; $count++)
     {
@@ -606,6 +611,22 @@ sub compile_order
         {
             @nums = ();
             %names = ();
+            if ($r->{'bctxt'})
+            { 
+                ($regb, $list) = @{$self->{'regexps'}{$r->{'bctxt'}}};
+                $namec = scalar @{$list};
+            }
+            else
+            { 
+                $regb = '';
+                $namec = 0;
+            }
+            
+            if ($r->{'actxt'})
+            { ($rega) = @{$self->{'regexps'}{$r->{'actxt'}}}; }
+            else
+            { $rega = ''; }
+
             error(undef, undef, "No regexp called $r->{$srcl} available") unless defined $r->{$srcl};
             ($reg, $list) = @{$self->{'regexps'}{$r->{$srcl}}};
             for ($i = 0; $i <= $#{$list}; $i++)
@@ -625,19 +646,19 @@ sub compile_order
                 if ($name =~ s{^\Q$r->{$destl}\E(?:/|$)}{})
                 { $name =~ s{^\Q$r->{$srcl}\E(?:/|$)}{}; }
 #                next unless ($name !~ m|/|o && $name ne '');
-                push (@nums, $names{$name}+1) if ($name && $names{$name});
+                push (@nums, $names{$name}+1+$namec) if ($name && $names{$name});
             }
 
             $eval = join('', map {"\$$_"} @nums);
             if ($sides[$count] eq 'unicode')
             {
                 use utf8;
-                push (@{$self->{$output}[$count]}, [qr/\G$reg/, $eval]);
+                push (@{$self->{$output}[$count]}, [qr/$regb\G$reg$rega/, $eval, $r->{'line'}, $namec]);
             }
             else
             {
                 use bytes;
-                push (@{$self->{$output}[$count]}, [qr/\G$reg/, $eval]);
+                push (@{$self->{$output}[$count]}, [qr/$regb\G$reg$rega/, $eval, $r->{'line'}, $namec]);
             }
         }
     }
@@ -670,7 +691,7 @@ sub reorder
                 # and here
                 next unless (@ress = $str =~ m/$r->[0]/gcs);
             }
-            $oldpos += length($ress[0]);
+            $oldpos += length($ress[$r->[3]]);
             pos($str) = $oldpos;
             $temp = $r->[1];
             $temp =~ s/\$(\d+)/$ress[$1 - 1]/og;
@@ -731,18 +752,18 @@ sub debug_reorder
                 # and here
                 next unless (@ress = $str =~ m/$r->[0]/gcs);
             }
-            $oldpos += length($ress[0]);
+            $oldpos += length($ress[$r->[3]]);
             pos($str) = $oldpos;
             $temp = $r->[1];
             $temp =~ s/\$(\d+)/$ress[$1 - 1]/og;
             $res .= $temp;
             if ($isbytes)
             {
-                $debug .= "reorder: $r->[0] = " . join(",", map {debug_blist($_)} @ress);
+                $debug .= "reorder(line $r->[2]): $r->[0] = " . join(",", map {debug_blist($_)} @ress);
                 $debug .= " -> $r->[1] = ";
                 $debug .= debug_blist($temp) . "\n\n";
             } else {
-                $debug .= "reorder: $r->[0] = " . join(",", map {debug_ulist($_)} @ress);
+                $debug .= "reorder(line $r->[2]): $r->[0] = " . join(",", map {debug_ulist($_)} @ress);
                 $debug .= " -> $r->[1]) = ";
                 $debug .= debug_ulist($temp) . "\n\n";
             }
@@ -762,6 +783,7 @@ sub debug_reorder
                 $str =~ m/\G(.)/ogcs;
                 $res .= $1;
             }
+            $oldpos++;
         }
     }
     if ($isbytes)
@@ -989,6 +1011,7 @@ sub as_perl
     $max = defined $self->{'max'} ? $self->{'max'} : 1;
 
     return warn("No class defined for $self->{'name'}\n    in " . $self->as_error) unless defined $class;
+    return warn("Empty class $self->{'name'}\n    in ". $self->as_error) unless (defined $class->{'elements'});
 
     if ($class->{'size'} && $class->{'size'} eq 'bytes')
     {
