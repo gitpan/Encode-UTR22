@@ -1,24 +1,32 @@
+#!/usr/bin/perl
+
 use Encode::UTR22;
 use Getopt::Std;
 use IO::File;
 use Compress::Zlib;
 
-$VERSION = 0.02;    # MJPH   7-JUL-2002     add bctxt to re-order rules
+$VERSION = 0.06;    # MJPH  12-FEB-2008     fix mapping to deletion
+# $VERSION = 0.05;    # MJPH  17-APR-2006     Fix bug in error message and add version to help
+# $VERSION = 0.04;    # MJPH  30-SEP-2005     handle -ve classes as first rule of reorder
+# $VERSION = 0.03;    # MJPH  22-SEP-2005     refix old offsets bug
+# $VERSION = 0.02;    # MJPH   7-JUL-2002     add bctxt to re-order rules
 # $VERSION = 0.01;    # MJPH   7-SEP-2002     Original
 
-getopts('z');
+getopts('vz');
 
 *error = \&Encode::UTR22::error;
 *strerror = \&Encode::UTR22::strerror;
 
 unless (defined $ARGV[1])
 {
-    die <<'EOT';
-    utr22tec [-z] infile outfile
+    die <<"EOT";
+    utr22tec [-v] [-z] infile outfile
 Compiles the given UTR22 XML mapping description into a SILtec binary file
 for use with SILtec.
 
+    -v  Give more information
     -z  Produce uncompressed file
+version: $VERSION
 EOT
 }
 
@@ -33,6 +41,14 @@ binmode $outfh;
 #foreach $r (sort {$self->{'contexts'}{$a}{'line'} <=> $self->{'contexts'}{$b}{'line'}}
 #            keys %{$self->{'contexts'}})
 #{ $self->{'regexps'}{$r} = $self->{'contexts'}{$r}->asTec(); }
+
+foreach $r (@{$enc->{'rules'}})
+{
+    foreach (split('', $r->{'b'}))
+    { $enc->{'ranges'}{'bytes'}{$_}++; }
+    foreach (split('', $r->{'u'}))
+    { $enc->{'ranges'}{'unicode'}{$_}++; }
+}
 
 $hdr = create_header($outfh, $enc);
 push (@tables, pad($outfh));
@@ -235,18 +251,18 @@ sub compile_map
                     || $a->[8]{'line'} <=> $b->[8]{'line'}} @{$r};
         
         error(undef, undef, "Ambiguous mapping from " . strerror($k, !$toBytes) . 
-                " at lines $r[-2][8]{'line'} and $r[-1][8]{'line'}")
+                " at lines $r->[-2][8]{'line'} and $r->[-1][8]{'line'}")
                 if (scalar @{$r} > 1 && $r->[-2][3] == 1 && $r->[-2][1] == 0 && $r->[-2][5] == 0);
         if (scalar @{$r} == 1)
         {
             if ($r->[0][1] != 0 || $r->[0][5] != 0)
             { error(undef, undef, "No default mapping for ". strerror($k, !$toBytes)); }
-            elsif ($toBytes && $r->[0][7] < 4)
+            elsif ($toBytes && $r->[0][7] < 4 && $r->[0][7] > 0)
             {
                 $self->{"${srcl}map"}{$k} = pack('C4', length($r->[0][8]{$destl}), unpack('C*', $r->[0][8]{$destl}));
                 next;
             }
-            elsif (!$toBytes && $r->[0][7] < 2)
+            elsif (!$toBytes && $r->[0][7] < 2 && $r->[0][7] > 0)
             {
                 my ($gen) = unpack('U', $r->[0][8]{$destl});
                 $self->{"${srcl}map"}{$k} = pack('CCn', 0, $gen >> 16, $gen & 0xFFFF);      #opcode should be 1
@@ -426,11 +442,11 @@ sub compile_order
         $mpre = $lpre if ($lpre > $mpre);
         $mpost = $lpost if ($lpost > $mpost);
         
-        push (@toffsets, length($lkup));
+        push (@toffsets, $toffsets[-1] + length($lkup));
         $lkup = pack('CCCCa*a*a*a*', length($tec) / 4, length($atec) / 4, length($btec) / 4, length($outtec) / 4, $tec, $atec, $btec, $outtec);
         push (@teclist, $lkup);
         
-        foreach $num ($self->{'contexts'}{$r->{$srcl}}->findfirst())
+        foreach $num ($self->{'contexts'}{$r->{$srcl}}->findfirst($self->{'ranges'}{$side}))
         { $firsts{$num} |= (1 << $count); }
         
         $count++;
@@ -446,6 +462,7 @@ sub compile_order
             $ocount = $vcount;
             for ($i = 0, $j = 1; $j <= $firsts{$k}; $i++, $j <<= 1)
             {
+                next unless (($firsts{$k} & $j) != 0);
                 push(@moffsets, $toffsets[$i]);
                 $vcount++;
             }
@@ -540,12 +557,12 @@ sub asTec
 
 sub findfirst
 {
-    my ($self) = @_;
+    my ($self, $range) = @_;
     my ($r, %res, @res1);
     
     foreach $r (@{$self->{'child'}})
     {
-        @res1 = $r->findfirst();
+        @res1 = $r->findfirst($range);
         map {$res{$_} = 1} @res1;
         last if (!defined $self->{'alt'} && (!defined $r->base()->{'min'} || $r->base()->{'min'} != 0));
     }
@@ -587,10 +604,21 @@ sub asTec
 
 sub findfirst
 {
-    my ($self) = @_;
+    my ($self, $range) = @_;
     my ($class) = $self->{'owner'}{'classes'}{$self->{'name'}};
 
-    return @{$class->{'elements'}};
+    if ($self->{'neg'})
+    {
+        my (%t) = map {$_ => 1} @{$class->{'elements'}};
+        if ($main::opt_v)
+        {
+            print STDERR "Negative class($self->{'name'}): %t = (" . join(' ', map{sprintf("%04X", unpack('U', $_))} sort keys %t) . ")\n";
+            print STDERR "over: %range = (" . join(' ', map{sprintf("%04X", unpack('U', $_))} sort keys %{$range}) . ")\n";
+        }
+        return grep {!defined $t{$_}} keys %{$range};
+    }
+    else
+    { return @{$class->{'elements'}}; }
 }
 
 package Encode::UTR22::Regexp::contextRef;
@@ -650,12 +678,12 @@ sub asTec
 
 sub findfirst
 {
-    my ($self) = @_;
+    my ($self, $range) = @_;
     my ($ref, $n);
     
     $ref = $self->base() || return ();
     
-    return $ref->findfirst();
+    return $ref->findfirst($range);
 }    
 
 

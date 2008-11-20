@@ -1,40 +1,71 @@
 package Encode::UTR22;
 
-=head1 TITLE
+=head1 NAME
 
 Encode::UTR22 - Implement Unicode TR22 complex conversions
 
-=DESCRIPTION
+=head1 DESCRIPTION
 
-Implements all of UTR22 except:
+Implements all of UTR22 except: validity, header, bidirectional re-ordering,
+history, v attribute for versioning, aliases - that's the job of another module
+fbu and fub are treated synonymously with single directional a, with equal priority
 
-    validity
-    negative regular expression groups
-    header
-    bidirectional re-ordering
-    history
-    v attribute for versioning
-    aliases - that's the job of another module
-    fbu and fub are treated synonymously with single directional a, with equal priority
+Supports UTR22c extensions including: contexts, reordering
 
-Features of this module
+=head1 INSTANCE VARIABLES
 
-    There is some error checking of description files to help those writing them
-    It's slow at the moment!
-    Supports priority attribute
+=over
+
+=item 'info'
+
+Hash containing attributes from the C<< <characterMapping> >> element.
+
+=item 'sub'
+
+Two element array containing, in order, the bytes and Unicode replacement characters
+
+=item 'classes'
+
+Hash, indexed by classname, returning L<Encode::UTR22::Regexp::class|Encode::UTR22::Regexp::class> object.
+
+=item 'rules'
+
+Array of rules, each rule being a hash. 
+
+=item 'contexts'
+
+Hash, indexed by contextname, returning L<Encode::UTR22::Regexp::group|Encode::UTR22::Regexp::group> object representing a context expression.
+
+=item 'orders'
+
+Hash, indexed by 'bytes' or 'unicode', returning hash containing ordering elements 'b', 'u', 'bctxt', 'actxt'
+
+=back
+
+=head1 METHODS
 
 =cut
 
 require 5.8.0;
 
 use XML::Parser::Expat;
+use Unicode::Normalize;
 use Encode;
 use Carp;
 use strict;
 
-use vars qw($current $curr_side $VERSION);
+use vars qw($curr_side $VERSION);
 
-$VERSION = 0.02;    #   MJPH     7-JUL-2004     Add bctxt to reorder rules
+$VERSION = 0.03;    #   MJPH     6-FEB-2004     Add Normalization to encode()
+# $VERSION = 0.02;    #   MJPH     7-JUL-2004     Add bctxt to reorder rules
+
+=over 8
+
+=item	new( $infile [, %parms ] )
+
+Create new instance, parsing and compiling the UTR22 xml
+
+=cut
 
 sub new
 {
@@ -43,6 +74,12 @@ sub new
     $self->compile(%attrs);
     $self;
 }
+
+=item	process_file( $infile [, %params ] )
+
+Create and return a new instance, and parse (but do not compile) a UTR22 xml file
+
+=cut
 
 sub process_file
 {
@@ -61,6 +98,8 @@ sub process_file
         'eos' => 'Encode::UTR22::Regexp::EOS'
         );
 
+	my $current ;
+	
     $xml->setHandlers('Start' => sub {
         my ($xml, $tag, %attrs) = @_;
         my ($this, $temp);
@@ -72,6 +111,7 @@ sub process_file
         elsif ($tag eq 'assignments')
         {
             $xml->{' mycontext'}{'sub'}[0] = pack('C', hex($attrs{'sub'}));
+          
             $xml->{' mycontext'}{'sub'}[1] = pack('U', 0xFFFD);
         }
         elsif ($tag eq 'a' || $tag eq 'fbu' || $tag eq 'fub')
@@ -80,8 +120,10 @@ sub process_file
                     unless (defined $attrs{'b'} && defined $attrs{'u'});
             push(@{$xml->{' mycontext'}{'rules'}}, {
                     'line' => $xml->current_line,
-                    'b' => pack('C0C*', map {hex($_)} $attrs{'b'} =~ m/\G\s*([0-9a-fA-F]{2})\s*/og),
-                    'u' => pack('U0U*', map {hex($_)} $attrs{'u'} =~ m/\G\s*([0-9a-fA-F]{4,6})\s*/og),
+#                    'b' => pack('C0C*', map {hex($_)} $attrs{'b'} =~ m/\G\s*([0-9a-fA-F]{2})/og),
+#                    'u' => pack('U0U*', map {hex($_)} $attrs{'u'} =~ m/\G\s*([0-9a-fA-F]{4,6})/og),
+                    'b' => pack('C*', map {hex($_)} split(' ', $attrs{'b'})),
+                    'u' => pack('U*', map {hex($_)} split(' ', $attrs{'u'})),
                     'type' => $tag,
                     'bactxt' => $attrs{'bactxt'},
                     'bbctxt' => $attrs{'bbctxt'},
@@ -168,10 +210,14 @@ sub process_file
         if (defined $current && $current->can('add_elements'))
         {
             if ($current->{'size'} && $current->{'size'} eq 'bytes')
-            { $current->add_elements(map {pack('C0C', hex($_))} $str =~ m/\G\s*([0-9a-fA-F]{2})\s*/og); }
+            { $current->add_elements(map {pack('C', hex($_))} split(' ', $str)); }
+#            { $current->add_elements(map {pack('C0C', hex($_))} $str =~ m/\G\s*([0-9a-fA-F]{2})\s*/og); }
             else
-            { $current->add_elements(map {pack('U0U', hex($_))} $str =~ m/\G\s*([0-9a-fA-F]{4,6})\s*/og); }
+            { $current->add_elements(map {pack('U', hex($_))} split(' ', $str)); }
+#            { $current->add_elements(map {pack('U0U', hex($_))} $str =~ m/\G\s*([0-9a-fA-F]{4,6})\s*/og); }
         }
+        elsif ($str !~ /^\s*$/ && !$xml->in_element('modified'))
+        {error($xml, undef, "unexpected text '$str' ignored"); }
     });
 
     if ($attrs{'-path'})
@@ -197,6 +243,23 @@ sub process_file
     return $context;
 }
 
+=item	compile( [ %params ] )
+
+Compile a UTR22 object.  Parameters recognized
+
+=over 4
+
+=item 'toBytes'
+
+Determines which direction that map will be compiled. True = compile for Unicode to Bytes. False = compile for Bytes to Unicode. Default is both.
+
+=item 'debug'
+
+Turn on debugging.
+
+=back
+
+=cut
 
 sub compile
 {
@@ -227,6 +290,12 @@ sub compile
     }
     $self;
 }
+
+=item	decode( $sourceByteString [, CHECK] )
+
+Perform Bytes to Unicode conversion.
+
+=cut
 
 sub decode($$;$)
 {
@@ -280,12 +349,23 @@ sub decode($$;$)
     $res;
 }
 
+=item	encode( $sourceUnicodeString [, CHECK])
+
+Perform Unicode to Bytes conversion.
+
+=cut
+
 sub encode($$;$)
 {
     my ($self, $str, $check) = @_;
     my ($res, $len, $c, $temp, $r, $tpos, $found);
 
     return undef unless ($self->{'usimple'} || $self->{'uconv'});
+
+    if ($self->{'info'}{'normalization'} eq 'NFD')
+    { $str = NFD($str); }
+    elsif ($self->{'info'}{'normalization'} eq 'NFC')
+    { $str = NFC($str); }
 
     Encode::_utf8_off($res);
 
@@ -409,6 +489,11 @@ sub debug_encode
     my ($res, $len, $c, $temp, $r, $tpos, $found, $debug, $debstr);
 
     return undef unless ($self->{'usimple'} || $self->{'uconv'});
+
+    if ($self->{'info'}{'normalization'} eq 'NFD')
+    { $str = NFD($str); }
+    elsif ($self->{'info'}{'normalization'} eq 'NFC')
+    { $str = NFC($str); }
 
     Encode::_utf8_off($res);
 
@@ -539,7 +624,7 @@ sub compile_map
             else
             {
                 $lres = $#temp + 1;
-                $res =~ s/([$%\\^&*(){}\[\]|"'?\/+.`~\-])/\\$1/ogs;
+                $res =~ s/([$%\\^&*(){}\[\]|"'?\/+.`~\-])/\\$1/ogs;         #"
                 $res =~ s/([^\x21-\x7e])/sprintf("\\x{%04X}", unpack('U', $1))/ogse;
                 push (@{$self->{"uconv"}{$first}}, [qr/$pre\G$res$post/, $r->{$destl}, $line,
                                                     $lres, $lpre, $lpost, $r->{'priority'}]);
@@ -561,7 +646,7 @@ sub compile_map
             else
             {
                 $lres = length($res);
-                $res =~ s/([$%\\^&*(){}\[\]|"'?\/+.`~\-])/\\$1/ogs;
+                $res =~ s/([$%\\^&*(){}\[\]|"'?\/+.`~\-])/\\$1/ogs;     #"
                 $res =~ s/([^\x21-\x7e])/sprintf("\\x%02x", ord($1))/ogse;
                 push (@{$self->{"bconv"}{$first}}, [qr/$pre\G$res$post/, $r->{$destl}, $line,
                                                     $lres, $lpre, $lpost, $r->{'priority'}]);
@@ -671,8 +756,16 @@ sub reorder
     my ($self, $str, $rules, $isbytes) = @_;
     my ($r, $res, $found, $len, @ress, $temp, $oldpos);
 
-    use bytes;
-    $len = length($str);
+    if ($isbytes || $] < 5.008)
+    {
+        use bytes;
+        $len = length($str);
+    }
+    else
+    {
+        use utf8;
+        $len = length($str);
+    }
     while (pos($str) < $len)
     {
         $found = 0;
@@ -712,6 +805,7 @@ sub reorder
                 $str =~ m/\G(.)/ogcs;
                 $res .= $1;
             }
+            $oldpos++;
         }
     }
     $res;
@@ -733,6 +827,17 @@ sub debug_reorder
     {
         use utf8;
         $len = length($str);
+    }
+    foreach $r (@{$rules})
+    {
+        if ($isbytes)
+        {
+            $debug .= "reorder(line $r->[2]): $r->[0] = ";
+            $debug .= " -> $r->[1]\n";
+        } else {
+            $debug .= "reorder(line $r->[2]): $r->[0] = ";
+            $debug .= " -> $r->[1])\n";
+        }
     }
     while (pos($str) < $len)
     {
@@ -759,11 +864,11 @@ sub debug_reorder
             $res .= $temp;
             if ($isbytes)
             {
-                $debug .= "reorder(line $r->[2]): $r->[0] = " . join(",", map {debug_blist($_)} @ress);
+                $debug .= "reorder(line $r->[2]): " . join(",", map {debug_blist($_)} @ress);
                 $debug .= " -> $r->[1] = ";
                 $debug .= debug_blist($temp) . "\n\n";
             } else {
-                $debug .= "reorder(line $r->[2]): $r->[0] = " . join(",", map {debug_ulist($_)} @ress);
+                $debug .= "reorder(line $r->[2]): $r->[0]" . join(",", map {debug_ulist($_)} @ress);
                 $debug .= " -> $r->[1]) = ";
                 $debug .= debug_ulist($temp) . "\n\n";
             }
@@ -906,7 +1011,10 @@ sub debug_blist
     return join(" ", @res);
 }
 
+no strict 'refs';
+
 package Encode::UTR22::Regexp::Element;
+use Carp;
 
 sub new
 {
@@ -920,14 +1028,61 @@ sub new
 sub add_child
 {
     my ($self, $child) = @_;
+    my ($name);
 
     $child->{'parent'} = $self;
     push (@{$self->{'child'}}, $child);
-    if ($child->{'id'})
-    { $self->{'named'}{$child->{'id'}} = $child; }
-    elsif ($child->{'name'})
-    { $self->{'named'}{$child->{'name'}} = $child; }
+    if ($name = $child->{'id'})
+    {
+    	if (defined $self->{'named'}{$name})
+    	{ carp("child with duplicate name at line $child->{'line'}"); }
+    }
+    else
+    {
+        $name = $child->{'name'};
+        while (defined $self->{'named'}{$name})
+        { $name =~ s/(\d*)$/$1 + 1/oe; }
+    }
+    $self->{'named'}{$name} = $child;
     $child;
+}
+
+# returns two-element array containing minimum and maximum length of the resultant regex element
+
+sub count
+{
+	my $self = shift;
+	my ($mymin, $mymax);
+	
+	if (exists $self->{'child'} && $#{$self->{'child'}} >= 0)
+	{
+		foreach (@{$self->{'child'}})
+		{
+			unless (defined $mymin)
+			{
+				($mymin, $mymax) = $_->count();
+			}
+			else
+			{
+				my ($cmin, $cmax) = $_->count();
+				if ($self->{'alt'})
+				{
+					$mymin = $cmin if $cmin < $mymin;
+					$mymax = $cmax if $cmax > $mymax;
+				}
+				else
+				{
+					$mymin += $cmin;
+					$mymax += $cmax;
+				}
+			}
+		}
+	}
+	else
+	{ $mymin = $mymax = 0; }
+	$mymin *= $self->{'min'} if defined $self->{'min'};
+	$mymax *= $self->{'max'} if defined $self->{'max'};
+	return ($mymin, $mymax);
 }
 
 sub as_error
@@ -941,27 +1096,28 @@ BEGIN { @ISA = qw(Encode::UTR22::Regexp::Element); }
 
 sub as_perl
 {
-    my ($self, $atstart) = @_;
+    my ($self, $atstart, %opts) = @_;
     my ($r, $res, $names, $count, $text, $sub, $subl, $lacc);
     my ($min, $max);
+    my ($fn) = $opts{'-fn'} || "as_perl";
 
     $min = defined $self->{'min'} ? $self->{'min'} : 1;
     $max = defined $self->{'max'} ? $self->{'max'} : 1;
 
     $names = [];
-    if ($self->{'id'} ne '')
+    if ($self->{'id'} ne '' && !$opts{'-noref'})
     {
         $res = "(";
         $names = [$self->{'id'}];
     }
-    
+
     if ($self->{'id'} eq '' || $min != 1 || $max != 1)
     { $res .= "(?:"; }
 
     $lacc = 0;
     foreach $r (@{$self->{'child'}})
     {
-        ($text, $sub, $subl) = @{$r->as_perl($atstart)};
+        ($text, $sub, $subl) = @{$r->${fn}($atstart, %opts)};
         if (defined $self->{'alt'})
         {
             if ($count)
@@ -988,7 +1144,7 @@ sub as_perl
         { $res .= "{$max}"; }
     } elsif ($min == 0)
     { $res .= "?"; }
-    $res .= ")" if ($self->{'id'} ne '');
+    $res .= ")" if ($self->{'id'} ne '' && !$opts{'-noref'});
     
     return [$res, $names, $lacc * $max];
 }
@@ -1000,9 +1156,18 @@ use vars qw(@ISA);
 
 BEGIN { @ISA = qw(Encode::UTR22::Regexp::Element); }
 
+sub count
+{
+	my $self = shift;
+	my ($min, $max);
+	$min = defined $self->{'min'} ? $self->{'min'} : 1;
+    $max = defined $self->{'max'} ? $self->{'max'} : 1;
+    return ($min, $max);
+}
+
 sub as_perl
 {
-    my ($self, $atstart) = @_;
+    my ($self, $atstart, %opts) = @_;
     my ($class) = $self->{'owner'}{'classes'}{$self->{'name'}};
     my ($res, $temp, $wrap);
     my ($min, $max);
@@ -1025,7 +1190,7 @@ sub as_perl
         $temp =~ s/([$%\\^&*(){}\[\]|+"'?\/.`~\-])/\\$1/og;
         $temp =~ s/([^\x21-\x7e])/sprintf("\\x{%04X}", unpack('U', $1))/oge;
     }
-    $res = "(" if ($self->{'id'});
+    $res = "(" if ($self->{'id'} && !$opts{'-noref'});
     $wrap = ($#{$class->{'elements'}} > 0 || defined $self->{'neg'} || $min != 1 || $max != 1);
     $res .= "[" if $wrap;
     $res .= '^' if (defined $self->{'neg'});
@@ -1043,7 +1208,7 @@ sub as_perl
     
     if ($self->{'id'})
     {
-        $res .= ')';
+        $res .= ')' unless ($opts{'-noref'});
         return [$res, [$self->{'id'}], $max];
     }
     else
@@ -1059,9 +1224,10 @@ BEGIN { @ISA = qw(Encode::UTR22::Regexp::Element); }
 
 sub as_perl
 {
-    my ($self, $atstart) = @_;
+    my ($self, $atstart, %opts) = @_;
     my ($ref, $n, $res, $ind, $temp, $len, $id);
 
+    my ($fn) = $opts{'-fn'} || "as_perl";
     unless ($self->{'name'})
     {
         print STDERR "No name attribute in context-ref at line $self->{'line'}\n";
@@ -1088,9 +1254,9 @@ sub as_perl
         $temp = bless {%$ref}, ref $ref;
         $temp->{'max'} = $self->{'max'} if defined $self->{'max'};
         $temp->{'min'} = $self->{'min'} if defined $self->{'min'};
-        ($res, $ind, $len) = @{$temp->as_perl($atstart)};
+        ($res, $ind, $len) = @{$temp->${fn}($atstart, %opts)};
     } else
-    { ($res, $ind, $len) = @{$ref->as_perl($atstart)}; }
+    { ($res, $ind, $len) = @{$ref->${fn}($atstart, %opts)}; }
 
     $id = $self->{'id'} || $self->{'name'};
     foreach $n (@{$ind}) { $n =~ s|^[^/]+|$id|o; }
@@ -1106,7 +1272,7 @@ BEGIN { @ISA = qw(Encode::UTR22::Regexp::Element); }
 
 sub as_perl
 {
-    my ($self, $atstart) = @_;
+    my ($self, $atstart, %opts) = @_;
 
     return [$atstart ? '^' : '$', [], 0];
 }
@@ -1147,4 +1313,8 @@ sub add_range
 }
 
 1;
+
+=head1 COPYRIGHT
+
+This module is copyright SIL International and is distributed under the same terms as Perl itself.
 
